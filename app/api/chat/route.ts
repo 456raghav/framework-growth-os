@@ -255,8 +255,20 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
       const result = await generateWithRetry(model, prompt);
       reply = result.reply;
       extracted = result.extracted;
+      console.log("=== RAW GEMINI EXTRACTION THIS TURN ===");
+      console.log(JSON.stringify(extracted, null, 2));
+      console.log("=== EXISTING LEAD BEFORE MERGE ===");
+      console.log(JSON.stringify(existingLead, null, 2));
+      console.log("=== END EXTRACTION DEBUG ===");
     } catch (error: unknown) {
-      console.error("Gemini call failed:", error instanceof Error ? error.message : error);
+      // TEMPORARY DEBUG LOGGING — remove once the real error is found
+      console.error("=== GEMINI CALL FAILED ===");
+      console.error(error);
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+      }
+      console.error("=== END ERROR ===");
 
       const isRateLimit =
         error instanceof Error &&
@@ -288,6 +300,10 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
       wantsToBook: extracted.wantsToBook || false,
       preferredCallTime: extracted.preferredCallTime || existingLead?.preferred_call_time || null,
     };
+
+    console.log("=== MERGED DATA ABOUT TO BE SAVED ===");
+    console.log(JSON.stringify(mergedData, null, 2));
+    console.log("=== END MERGED DATA ===");
 
     const hasAnyData =
       mergedData.name || mergedData.email || mergedData.phone || mergedData.serviceNeeded;
@@ -348,7 +364,7 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
             leadName: mergedData.name || "",
             businessName: client.name,
             preferredCallTime: mergedData.preferredCallTime || "soon",
-            serviceNeeded: mergedData.serviceNeeded,
+            serviceNeeded: mergedData.serviceNeeded || null,
           });
 
           if (!emailResult.success) {
