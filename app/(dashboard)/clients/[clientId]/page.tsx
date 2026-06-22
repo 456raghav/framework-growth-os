@@ -1,142 +1,226 @@
-import { redirect, notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import LeadCard from "./LeadCard";
-import EmbedSettings from "./EmbedSettings";
+"use client";
 
-type Props = {
-  params: Promise<{
-    clientId: string;
-  }>;
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+type CrawlStatus = {
+  started: boolean;
+  pagesFound: number;
+  pagesCrawled: number;
+  errors: string[];
 };
 
-export default async function ClientWorkspacePage({ params }: Props) {
-  const { clientId } = await params;
+export default function NewClientPage() {
+  const router = useRouter();
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const [saving, setSaving] = useState(false);
+  const [crawlStatus, setCrawlStatus] = useState<CrawlStatus | null>(null);
+  const [saveError, setSaveError] = useState("");
 
-  if (!user) redirect("/login");
+  const [name, setName] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [location, setLocation] = useState("");
+  const [website, setWebsite] = useState("");
+  const [services, setServices] = useState("");
+  const [faqs, setFaqs] = useState("");
+  const [calendarLink, setCalendarLink] = useState("");
 
-  const { data: profile } = await supabaseAdmin
-    .from("user_profiles")
-    .select("role, client_id")
-    .eq("id", user.id)
-    .single();
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setSaveError("");
+    setCrawlStatus(null);
 
-  const isOperator = profile?.role === "operator" || profile?.role === "specialist";
-  const isOwnClient = profile?.client_id === clientId;
+    const response = await fetch("/api/clients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        industry,
+        location,
+        website,
+        services,
+        faqs,
+        calendarLink,
+      }),
+    });
 
-  if (!isOperator && !isOwnClient) {
-    notFound();
+    const data = await response.json();
+    setSaving(false);
+
+    if (!response.ok) {
+      setSaveError(data.error || "Something went wrong while saving the client.");
+      return;
+    }
+
+    // Show crawl results before redirecting so operator knows
+    // what got crawled and what failed
+    if (data.crawlStatus) {
+      setCrawlStatus(data.crawlStatus);
+
+      // If crawl had errors or missed pages, stay on page so operator
+      // can see the details. They can navigate away manually.
+      // If crawl was clean, auto-redirect after 3 seconds.
+      const hasIssues =
+        data.crawlStatus.errors.length > 0 ||
+        (data.crawlStatus.started && data.crawlStatus.pagesCrawled === 0);
+
+      if (!hasIssues) {
+        setTimeout(() => router.push("/"), 3000);
+      }
+    } else {
+      router.push("/");
+    }
   }
-
-  const { data: client, error: clientError } = await supabaseAdmin
-    .from("clients")
-    .select("*")
-    .eq("id", clientId)
-    .single();
-
-  const { data: leads } = await supabaseAdmin
-    .from("leads")
-    .select("*")
-    .eq("client_id", clientId)
-    .order("last_message_at", { ascending: false });
-
-  if (clientError || !client) {
-    notFound();
-  }
-
-  const statusCounts = {
-    New: leads?.filter((l) => l.status === "New").length || 0,
-    Qualified: leads?.filter((l) => l.status === "Qualified").length || 0,
-    Hot: leads?.filter((l) => l.status === "Hot").length || 0,
-    "Callback Requested":
-      leads?.filter((l) => l.status === "Callback Requested").length || 0,
-    Booked: leads?.filter((l) => l.status === "Booked").length || 0,
-  };
 
   return (
-    <div className="p-4 md:p-8">
-      <div className="border-b border-white/10 pb-4 md:pb-6">
-        <p className="text-sm font-medium text-cyan-300">
-          {isOperator ? "Operator view" : "Your dashboard"}
+    <main className="min-h-screen bg-slate-950 text-white">
+      <section className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8">
+        <h1 className="text-2xl font-semibold md:text-4xl">Add a new client</h1>
+        <p className="mt-2 text-sm text-slate-300 md:mt-3 md:text-base">
+          This information becomes the business brain for the AI assistant.
         </p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight md:text-5xl">
-          {client.name}
-        </h1>
-        <p className="mt-2 text-sm leading-6 text-slate-300 md:text-base">
-          {client.industry || "Service business"} in{" "}
-          {client.location || "Unknown location"}
-        </p>
-      </div>
 
-      {/* Status counts — 2 cols on mobile, 5 on desktop */}
-      <section className="mt-4 grid grid-cols-2 gap-3 md:mt-8 md:grid-cols-5 md:gap-4">
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <p className="text-xs text-slate-400 md:text-sm">New</p>
-          <p className="mt-1 text-2xl font-semibold md:mt-2 md:text-3xl">
-            {statusCounts.New}
-          </p>
-        </div>
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <p className="text-xs text-slate-400 md:text-sm">Qualified</p>
-          <p className="mt-1 text-2xl font-semibold text-cyan-300 md:mt-2 md:text-3xl">
-            {statusCounts.Qualified}
-          </p>
-        </div>
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <p className="text-xs text-slate-400 md:text-sm">Hot</p>
-          <p className="mt-1 text-2xl font-semibold text-orange-400 md:mt-2 md:text-3xl">
-            {statusCounts.Hot}
-          </p>
-        </div>
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <p className="text-xs text-slate-400 md:text-sm">Callback</p>
-          <p className="mt-1 text-2xl font-semibold text-amber-300 md:mt-2 md:text-3xl">
-            {statusCounts["Callback Requested"]}
-          </p>
-        </div>
-        <div className="col-span-2 rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-1">
-          <p className="text-xs text-slate-400 md:text-sm">Booked</p>
-          <p className="mt-1 text-2xl font-semibold text-emerald-400 md:mt-2 md:text-3xl">
-            {statusCounts.Booked}
-          </p>
-        </div>
-      </section>
-
-      {isOperator && (
-        <div className="mt-6 md:mt-8">
-          <EmbedSettings
-            clientId={client.id}
-            initialAllowedDomains={client.allowed_domains}
+        <form
+          onSubmit={handleSubmit}
+          className="mt-6 space-y-4 rounded-lg border border-white/10 bg-white/5 p-4 md:mt-8 md:space-y-5 md:p-5"
+        >
+          <input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Business name *"
+            className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
           />
-        </div>
-      )}
-
-      <section className="mt-6 rounded-lg border border-white/10 bg-white/5 md:mt-8">
-        <div className="border-b border-white/10 p-4 md:p-5">
-          <h2 className="text-lg font-semibold">Leads</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Sorted by most recent activity.
-            {isOperator && " Tap a status to update it manually."}
-          </p>
-        </div>
-
-        <div className="divide-y divide-white/10">
-          {leads && leads.length > 0 ? (
-            leads.map((lead) => (
-              <LeadCard key={lead.id} lead={lead} readOnly={!isOperator} />
-            ))
-          ) : (
-            <p className="p-4 text-sm text-slate-400 md:p-5">
-              No leads captured yet.
+          <input
+            value={industry}
+            onChange={(e) => setIndustry(e.target.value)}
+            placeholder="Industry"
+            className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          <input
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="Service location"
+            className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          <div>
+            <input
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+              placeholder="Website URL"
+              className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+            />
+            <p className="mt-1.5 text-xs text-slate-400">
+              We&apos;ll crawl this website and build the AI&apos;s knowledge base after you save.
             </p>
+          </div>
+          <textarea
+            value={services}
+            onChange={(e) => setServices(e.target.value)}
+            placeholder="Services offered"
+            rows={4}
+            className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          <textarea
+            value={faqs}
+            onChange={(e) => setFaqs(e.target.value)}
+            placeholder="FAQs"
+            rows={4}
+            className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          <input
+            value={calendarLink}
+            onChange={(e) => setCalendarLink(e.target.value)}
+            placeholder="Calendar booking link"
+            className="w-full rounded-md bg-slate-900 p-3 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+
+          {saveError && (
+            <p className="text-sm text-red-400">✗ {saveError}</p>
           )}
-        </div>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="w-full rounded-md bg-cyan-300 px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-50"
+          >
+            {saving ? "Saving and crawling website..." : "Save Client"}
+          </button>
+        </form>
+
+        {/* Crawl results — shown after save */}
+        {crawlStatus && (
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/5 p-4">
+            <p className="text-sm font-semibold text-slate-200">
+              Website crawl results
+            </p>
+
+            <div className="mt-3 flex gap-6">
+              <div>
+                <p className="text-xs text-slate-400">Pages found</p>
+                <p className="text-lg font-semibold">{crawlStatus.pagesFound}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Pages crawled</p>
+                <p className="text-lg font-semibold text-emerald-400">
+                  {crawlStatus.pagesCrawled}
+                </p>
+              </div>
+              {crawlStatus.errors.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-400">Errors</p>
+                  <p className="text-lg font-semibold text-red-400">
+                    {crawlStatus.errors.length}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {crawlStatus.errors.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-medium text-red-400 mb-1">
+                  Pages that failed to crawl:
+                </p>
+                <ul className="space-y-1">
+                  {crawlStatus.errors.map((err, i) => (
+                    <li key={i} className="text-xs text-slate-400 break-all">
+                      • {err}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {crawlStatus.pagesCrawled === 0 && crawlStatus.started && (
+              <p className="mt-3 text-xs text-amber-400">
+                ⚠ No pages were crawled successfully. The AI will have no website
+                knowledge. Check the URL and try adding the client again.
+              </p>
+            )}
+
+            {crawlStatus.pagesCrawled > 0 && crawlStatus.errors.length === 0 && (
+              <p className="mt-3 text-xs text-emerald-400">
+                ✓ All pages crawled successfully. Redirecting...
+              </p>
+            )}
+
+            {crawlStatus.pagesCrawled > 0 && crawlStatus.errors.length > 0 && (
+              <p className="mt-3 text-xs text-amber-400">
+                ⚠ Some pages failed. The AI has partial website knowledge.
+                You can still proceed — just note the gaps above.
+              </p>
+            )}
+
+            <button
+              onClick={() => router.push("/")}
+              className="mt-4 rounded-md bg-slate-700 px-4 py-2 text-xs font-semibold"
+            >
+              Go to dashboard →
+            </button>
+          </div>
+        )}
       </section>
-    </div>
+    </main>
   );
 }
