@@ -15,6 +15,11 @@ type Lead = {
   qualification_score: number | null;
 };
 
+type Props = {
+  lead: Lead;
+  readOnly?: boolean;
+};
+
 const STATUS_OPTIONS = [
   "New",
   "Qualified",
@@ -33,7 +38,7 @@ const STATUS_COLORS: Record<string, string> = {
   Lost: "bg-red-400/10 text-red-300",
 };
 
-export default function LeadCard({ lead }: { lead: Lead }) {
+export default function LeadCard({ lead, readOnly = false }: Props) {
   const [status, setStatus] = useState(lead.status);
   const [updating, setUpdating] = useState(false);
 
@@ -89,18 +94,26 @@ export default function LeadCard({ lead }: { lead: Lead }) {
         </p>
       </div>
 
-      <select
-        value={status}
-        onChange={(e) => handleStatusChange(e.target.value)}
-        disabled={updating}
-        className={`h-fit rounded-full border-0 px-3 py-1 text-sm font-medium outline-none disabled:opacity-50 ${STATUS_COLORS[status] || STATUS_COLORS.New}`}
-      >
-        {STATUS_OPTIONS.map((option) => (
-          <option key={option} value={option} className="bg-slate-900 text-white">
-            {option}
-          </option>
-        ))}
-      </select>
+      {readOnly ? (
+        <span
+          className={`h-fit rounded-full px-3 py-1 text-sm font-medium ${STATUS_COLORS[status] || STATUS_COLORS.New}`}
+        >
+          {status}
+        </span>
+      ) : (
+        <select
+          value={status}
+          onChange={(e) => handleStatusChange(e.target.value)}
+          disabled={updating}
+          className={`h-fit rounded-full border-0 px-3 py-1 text-sm font-medium outline-none disabled:opacity-50 ${STATUS_COLORS[status] || STATUS_COLORS.New}`}
+        >
+          {STATUS_OPTIONS.map((option) => (
+            <option key={option} value={option} className="bg-slate-900 text-white">
+              {option}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { createClient } from "@/lib/supabase/server";
 
 const VALID_STATUSES = [
   "New",
@@ -15,6 +16,31 @@ export async function PATCH(
   { params }: { params: Promise<{ leadId: string }> }
 ) {
   try {
+    // Server-side role check — hiding the dropdown in the UI for
+    // client-role users isn't real protection on its own, since anyone
+    // can call this API directly. This is the actual enforcement point.
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const { data: profile } = await supabaseAdmin
+      .from("user_profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    if (profile?.role !== "operator" && profile?.role !== "specialist") {
+      return NextResponse.json(
+        { error: "Only operators and specialists can update lead status" },
+        { status: 403 }
+      );
+    }
+
     const { leadId } = await params;
     const body = await request.json();
     const { status, notes } = body;
