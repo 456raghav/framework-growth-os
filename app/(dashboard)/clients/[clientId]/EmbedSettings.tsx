@@ -11,13 +11,7 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
   const [allowedDomains, setAllowedDomains] = useState(initialAllowedDomains || "");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  // hostUrl starts empty on both server AND initial client render — this
-  // avoids the hydration mismatch. We fill it in AFTER mount, via useEffect,
-  // which only runs in the browser. React expects this pattern and won't
-  // complain, because the initial client render now matches the server
-  // render exactly (both empty), and the update happens in a separate
-  // pass after hydration completes.
+  const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
   const [hostUrl, setHostUrl] = useState("");
 
   useEffect(() => {
@@ -28,15 +22,26 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
 
   async function handleSave() {
     setSaving(true);
+    setSaveStatus("idle");
+
     try {
-      await fetch(`/api/clients/${clientId}`, {
+      const res = await fetch(`/api/clients/${clientId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ allowedDomains }),
       });
+
+      if (!res.ok) {
+        setSaveStatus("error");
+      } else {
+        setSaveStatus("success");
+        // Reset success message after 3 seconds
+        setTimeout(() => setSaveStatus("idle"), 3000);
+      }
     } catch {
-      // Silent fail acceptable here — not safety critical, user can retry
+      setSaveStatus("error");
     }
+
     setSaving(false);
   }
 
@@ -49,7 +54,7 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
   const isUnrestricted = !allowedDomains || allowedDomains.trim() === "";
 
   return (
-    <section className="rounded-lg border border-white/10 bg-white/5 p-5">
+    <section className="rounded-lg border border-white/10 bg-white/5 p-4 md:p-5">
       <h2 className="text-lg font-semibold">Embed on website</h2>
       <p className="mt-1 text-sm text-slate-400">
         Paste this snippet into the client&apos;s website, right before{" "}
@@ -75,15 +80,18 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
         </label>
         <p className="mt-1 text-xs text-slate-400">
           The widget will only run on these domains. Comma-separated if
-          multiple (e.g. navahh.com, www.navahh.com).
+          multiple (e.g. navahh.in, www.navahh.in).
         </p>
 
         <div className="mt-2 flex gap-2">
           <input
             value={allowedDomains}
-            onChange={(e) => setAllowedDomains(e.target.value)}
-            placeholder="e.g. navahh.com"
-            className="flex-1 rounded-md bg-slate-900 p-2.5 text-sm"
+            onChange={(e) => {
+              setAllowedDomains(e.target.value);
+              setSaveStatus("idle");
+            }}
+            placeholder="e.g. navahh.in"
+            className="flex-1 rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
           />
           <button
             onClick={handleSave}
@@ -94,10 +102,20 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
           </button>
         </div>
 
-        {isUnrestricted && (
+        {/* Feedback messages */}
+        {saveStatus === "success" && (
+          <p className="mt-2 text-xs text-emerald-400">
+            ✓ Domain saved successfully.
+          </p>
+        )}
+        {saveStatus === "error" && (
+          <p className="mt-2 text-xs text-red-400">
+            ✗ Failed to save. Check your connection and try again.
+          </p>
+        )}
+        {saveStatus === "idle" && isUnrestricted && (
           <p className="mt-2 text-xs text-amber-400">
-            ⚠ No domain restriction set — this widget currently runs on ANY
-            website. Set this before going live with a real client.
+            ⚠ No domain restriction set — this widget runs on ANY website. Set this before going live.
           </p>
         )}
       </div>
