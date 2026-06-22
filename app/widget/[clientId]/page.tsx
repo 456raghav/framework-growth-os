@@ -15,6 +15,35 @@ type Props = {
 
 type AuthState = "checking" | "allowed" | "denied";
 
+// Safe storage: tries localStorage first, falls back to sessionStorage,
+// then falls back to in-memory. Covers Safari private mode and any
+// browser that blocks storage APIs entirely.
+const memoryStore: Record<string, string> = {};
+
+function storageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return memoryStore[key] || null;
+    }
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {
+      memoryStore[key] = value;
+    }
+  }
+}
+
 export default function WidgetPage({ params }: Props) {
   const [clientId, setClientId] = useState("");
   const [conversationId, setConversationId] = useState("");
@@ -29,16 +58,13 @@ export default function WidgetPage({ params }: Props) {
   const [loading, setLoading] = useState(false);
   const [authState, setAuthState] = useState<AuthState>("checking");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     params.then(async (value) => {
       const cId = value.clientId;
       setClientId(cId);
 
-      // Read the parent page's true origin, passed explicitly by embed.js
-      // via query param. This is more reliable than Referer headers, which
-      // only report the immediate caller — see embed.js for the full
-      // explanation of why this approach replaced the header-based check.
       const urlParams = new URLSearchParams(window.location.search);
       const origin = urlParams.get("parentOrigin") || "";
       setParentOrigin(origin);
@@ -50,17 +76,15 @@ export default function WidgetPage({ params }: Props) {
         const data = await res.json();
         setAuthState(data.allowed ? "allowed" : "denied");
       } catch {
-        // If the check itself fails (network issue), fail open for
-        // localhost dev but this should be monitored in production.
         setAuthState("allowed");
       }
 
       const storageKey = `fgos_conv_${cId}`;
-      let storedConversationId = localStorage.getItem(storageKey);
+      let storedConversationId = storageGet(storageKey);
 
       if (!storedConversationId) {
         storedConversationId = crypto.randomUUID();
-        localStorage.setItem(storageKey, storedConversationId);
+        storageSet(storageKey, storedConversationId);
       }
 
       setConversationId(storedConversationId);
@@ -78,6 +102,10 @@ export default function WidgetPage({ params }: Props) {
     setMessage("");
     setLoading(true);
 
+    // Re-focus input after sending — important on mobile so keyboard
+    // stays up and user doesn't have to tap the input again
+    setTimeout(() => inputRef.current?.focus(), 100);
+
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
 
     try {
@@ -93,9 +121,7 @@ export default function WidgetPage({ params }: Props) {
       });
 
       const data = await response.json();
-
       const reply = data.reply || "Something went wrong. Please try again.";
-
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch {
       setMessages((prev) => [
@@ -139,26 +165,32 @@ export default function WidgetPage({ params }: Props) {
   }
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-white">
+    // Use dvh (dynamic viewport height) instead of h-screen —
+    // on mobile, h-screen doesn't account for the browser chrome
+    // (address bar, bottom nav). dvh updates dynamically so the
+    // widget never gets cut off or hidden behind the keyboard.
+    <div className="flex w-screen flex-col overflow-hidden bg-white" 
+         style={{ height: '100dvh' }}>
+      
       {/* Header */}
-      <div className="flex items-center gap-3 bg-slate-950 px-4 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-400 text-xs font-bold text-slate-950">
+      <div className="flex shrink-0 items-center gap-3 bg-slate-950 px-4 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-400 text-xs font-bold text-slate-950">
           AI
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm font-semibold text-white">AI Assistant</p>
           <p className="text-xs text-slate-400">Usually replies instantly</p>
         </div>
-        <div className="ml-auto flex h-2 w-2 rounded-full bg-emerald-400" />
+        <div className="ml-auto flex h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+      {/* Messages — flex-1 takes remaining height, overflow scrolls */}
+      <div className="flex-1 space-y-3 overflow-y-auto p-4 pb-2">
         {messages.map((msg, index) => (
           <div
             key={index}
             className={
-              msg.role === "user" ? "ml-auto max-w-[80%]" : "mr-auto max-w-[80%]"
+              msg.role === "user" ? "ml-auto max-w-[85%]" : "mr-auto max-w-[85%]"
             }
           >
             <div
@@ -174,7 +206,7 @@ export default function WidgetPage({ params }: Props) {
         ))}
 
         {loading && (
-          <div className="mr-auto max-w-[80%]">
+          <div className="mr-auto max-w-[85%]">
             <div className="inline-flex items-center gap-1 rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-3">
               <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:0ms]" />
               <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:150ms]" />
@@ -186,20 +218,26 @@ export default function WidgetPage({ params }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div className="flex gap-2 border-t border-slate-200 p-3">
+      {/* Input — shrink-0 keeps it pinned at bottom, never pushed off screen */}
+      <div className="shrink-0 flex gap-2 border-t border-slate-200 bg-white p-3">
         <input
+          ref={inputRef}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Type your message..."
           disabled={loading}
+          // font-size 16px prevents iOS Safari from auto-zooming on focus
           className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 disabled:opacity-50"
+          style={{ fontSize: '16px' }}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck="false"
         />
         <button
           onClick={sendMessage}
           disabled={loading || !message.trim()}
-          className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+          className="shrink-0 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
         >
           Send
         </button>
