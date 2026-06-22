@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const WINDOW_MS = 60 * 1000; // 1 minute window
-const MAX_REQUESTS = 20; // max 20 messages per minute per IP/conversation
+const MAX_REQUESTS = 20; // max 20 messages per minute per conversation
 
 export async function checkRateLimit(identifier: string): Promise<{
   allowed: boolean;
@@ -9,7 +9,9 @@ export async function checkRateLimit(identifier: string): Promise<{
 }> {
   const windowStart = new Date(Date.now() - WINDOW_MS).toISOString();
 
-  // Get current count for this identifier in the window
+  // maybeSingle() returns null on zero rows instead of throwing —
+  // the old .single() was throwing a PostgREST error on first request
+  // ever, which was being silently swallowed by the null check.
   const { data: existing } = await supabaseAdmin
     .from("rate_limits")
     .select("id, request_count")
@@ -17,10 +19,9 @@ export async function checkRateLimit(identifier: string): Promise<{
     .gte("window_start", windowStart)
     .order("window_start", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (!existing) {
-    // First request in this window — create record
     await supabaseAdmin.from("rate_limits").insert({
       identifier,
       window_start: new Date().toISOString(),
@@ -34,7 +35,6 @@ export async function checkRateLimit(identifier: string): Promise<{
     return { allowed: false, remaining: 0 };
   }
 
-  // Increment counter
   await supabaseAdmin
     .from("rate_limits")
     .update({ request_count: existing.request_count + 1 })
