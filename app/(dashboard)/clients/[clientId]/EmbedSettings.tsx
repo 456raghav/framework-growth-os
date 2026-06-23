@@ -5,10 +5,16 @@ import { useEffect, useState } from "react";
 type Props = {
   clientId: string;
   initialAllowedDomains: string | null;
+  initialCustomKnowledge: string | null;
 };
 
-export default function EmbedSettings({ clientId, initialAllowedDomains }: Props) {
+export default function EmbedSettings({
+  clientId,
+  initialAllowedDomains,
+  initialCustomKnowledge,
+}: Props) {
   const [allowedDomains, setAllowedDomains] = useState(initialAllowedDomains || "");
+  const [customKnowledge, setCustomKnowledge] = useState(initialCustomKnowledge || "");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
@@ -28,14 +34,13 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
       const res = await fetch(`/api/clients/${clientId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowedDomains }),
+        body: JSON.stringify({ allowedDomains, customKnowledge }),
       });
 
       if (!res.ok) {
         setSaveStatus("error");
       } else {
         setSaveStatus("success");
-        // Reset success message after 3 seconds
         setTimeout(() => setSaveStatus("idle"), 3000);
       }
     } catch {
@@ -74,50 +79,60 @@ export default function EmbedSettings({ clientId, initialAllowedDomains }: Props
         </button>
       </div>
 
-      <div className="mt-5 border-t border-white/10 pt-5">
-        <label className="text-sm font-medium text-slate-200">
-          Authorized domain
-        </label>
-        <p className="mt-1 text-xs text-slate-400">
-          The widget will only run on these domains. Comma-separated if
-          multiple (e.g. navahh.in, www.navahh.in).
-        </p>
+      <div className="mt-5 space-y-5 border-t border-white/10 pt-5">
 
-        <div className="mt-2 flex gap-2">
+        {/* Authorized domain */}
+        <div>
+          <label className="text-sm font-medium text-slate-200">Authorized domain</label>
+          <p className="mt-1 text-xs text-slate-400">
+            The widget only runs on these domains. Comma-separated if multiple.
+          </p>
           <input
             value={allowedDomains}
-            onChange={(e) => {
-              setAllowedDomains(e.target.value);
-              setSaveStatus("idle");
-            }}
-            placeholder="e.g. navahh.in"
-            className="flex-1 rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+            onChange={(e) => { setAllowedDomains(e.target.value); setSaveStatus("idle"); }}
+            placeholder="e.g. navahh.in, www.navahh.in"
+            className="mt-2 w-full rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
           />
+          {isUnrestricted && (
+            <p className="mt-1.5 text-xs text-amber-400">
+              ⚠ No domain set — widget runs on ANY website. Set before going live.
+            </p>
+          )}
+        </div>
+
+        {/* Custom knowledge */}
+        <div>
+          <label className="text-sm font-medium text-slate-200">Custom knowledge</label>
+          <p className="mt-1 text-xs text-slate-400">
+            Anything the AI should know that&apos;s not on the website — service area,
+            pricing, brands serviced, fees, team info, availability. Plain text.
+          </p>
+          <textarea
+            value={customKnowledge}
+            onChange={(e) => { setCustomKnowledge(e.target.value); setSaveStatus("idle"); }}
+            placeholder={`Example:\n- Service area: zip codes 85001–85099 only\n- Diagnostic fee: $89 (waived if repair booked same day)\n- Brands serviced: Carrier, Trane, Lennox\n- Not available Sundays`}
+            rows={6}
+            className="mt-2 w-full rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+        </div>
+
+        {/* Save button + feedback */}
+        <div>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="shrink-0 rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            className="rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving..." : "Save settings"}
           </button>
-        </div>
 
-        {/* Feedback messages */}
-        {saveStatus === "success" && (
-          <p className="mt-2 text-xs text-emerald-400">
-            ✓ Domain saved successfully.
-          </p>
-        )}
-        {saveStatus === "error" && (
-          <p className="mt-2 text-xs text-red-400">
-            ✗ Failed to save. Check your connection and try again.
-          </p>
-        )}
-        {saveStatus === "idle" && isUnrestricted && (
-          <p className="mt-2 text-xs text-amber-400">
-            ⚠ No domain restriction set — this widget runs on ANY website. Set this before going live.
-          </p>
-        )}
+          {saveStatus === "success" && (
+            <span className="ml-3 text-xs text-emerald-400">✓ Saved successfully.</span>
+          )}
+          {saveStatus === "error" && (
+            <span className="ml-3 text-xs text-red-400">✗ Save failed. Try again.</span>
+          )}
+        </div>
       </div>
     </section>
   );

@@ -1,18 +1,43 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ clientId: string }> }
 ) {
   try {
+    // Auth check — only operators can update client settings
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const { data: profile } = await supabaseAdmin
+      .from("user_profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const isOperator = profile?.role === "operator" || profile?.role === "specialist";
+    if (!isOperator) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const { clientId } = await params;
     const body = await request.json();
-    const { allowedDomains } = body;
+    const { allowedDomains, customKnowledge } = body;
+
+    // Build update object — only include fields that were actually sent
+    // so a call that only updates allowedDomains doesn't wipe customKnowledge
+    const updateFields: Record<string, string | null> = {};
+    if (allowedDomains !== undefined) updateFields.allowed_domains = allowedDomains;
+    if (customKnowledge !== undefined) updateFields.custom_knowledge = customKnowledge;
 
     const { data, error } = await supabaseAdmin
       .from("clients")
-      .update({ allowed_domains: allowedDomains })
+      .update(updateFields)
       .eq("id", clientId)
       .select()
       .single();

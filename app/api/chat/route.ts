@@ -13,8 +13,6 @@ import {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-// Schema for structured output — Gemini returns JSON matching this shape.
-// One model call gives us BOTH the conversational reply AND extracted lead fields.
 const responseSchema = {
   type: SchemaType.OBJECT,
   properties: {
@@ -111,13 +109,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Client not found" }, { status: 404 });
     }
 
-    // Re-validate domain authorization here too — the iframe-side check
-    // in embed-config is a fast first gate, but it can be bypassed by
-    // anyone calling this endpoint directly (e.g. via curl/Postman),
-    // skipping the widget page entirely. This is the real enforcement.
-    // PRIMARY CHECK: parentOrigin from the widget, which got it directly
-    // from embed.js running in the client's real page (most reliable).
-    // FALLBACK: Referer header, for direct widget access without embed.js.
     const referrer = request.headers.get("referer");
     const requestDomain = parentOrigin
       ? extractDomain(parentOrigin)
@@ -143,8 +134,6 @@ export async function POST(request: Request) {
       .order("created_at", { ascending: false })
       .limit(20);
 
-    // Fetch existing lead for this conversation, if any — gives us
-    // current status and previously extracted fields as context
     const { data: existingLead } = await supabaseAdmin
       .from("leads")
       .select("*")
@@ -159,6 +148,14 @@ export async function POST(request: Request) {
             `PAGE: ${page.page_title}\nURL: ${page.page_url}\n\n${page.content?.slice(0, 5000)}`
         )
         .join("\n\n---\n\n") || "No website knowledge available.";
+
+    // GAP 3 — inject custom knowledge above website content.
+    // Marked highest priority so it wins over crawled content on conflicts
+    // (e.g. the crawled site says "call us anytime" but custom knowledge
+    // says "not available Sundays" — the custom knowledge is ground truth).
+    const customKnowledgeSection = client.custom_knowledge
+      ? `\nCUSTOM BUSINESS KNOWLEDGE (highest priority — always use this over website content if there is a conflict):\n${client.custom_knowledge}\n`
+      : "";
 
     const conversationHistory =
       previousMessages
@@ -214,7 +211,7 @@ FAQs: ${client.faqs}
 
 WEBSITE KNOWLEDGE
 ${websiteKnowledge}
-
+${customKnowledgeSection}
 ${knownFields}
 
 CONVERSATION RULES
@@ -261,7 +258,6 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
       console.log(JSON.stringify(existingLead, null, 2));
       console.log("=== END EXTRACTION DEBUG ===");
     } catch (error: unknown) {
-      // TEMPORARY DEBUG LOGGING — remove once the real error is found
       console.error("=== GEMINI CALL FAILED ===");
       console.error(error);
       if (error instanceof Error) {
@@ -288,8 +284,6 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
       content: reply,
     });
 
-    // Merge newly extracted data with what we already knew —
-    // never overwrite a known field with null/empty from this turn
     const mergedData: ExtractedLeadData = {
       name: extracted.name || existingLead?.name || null,
       email: extracted.email || existingLead?.email || null,
@@ -315,11 +309,6 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
       );
       const score = calculateQualificationScore(mergedData);
 
-      // Use upsert keyed on the (client_id, conversation_id) unique index
-      // created in the Phase 1 migration. This replaces the old manual
-      // "if existingLead, update; else insert" branch, which could silently
-      // affect zero rows with no visible error if the read and write
-      // disagreed on whether a row existed.
       const { error: upsertError } = await supabaseAdmin
         .from("leads")
         .upsert(
@@ -341,24 +330,14 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
         );
 
       if (upsertError) {
-        // This is the line that would have caught the original bug —
-        // the old code never checked for this.
         console.error("=== LEAD UPSERT FAILED ===");
         console.error(upsertError);
         console.error("=== END LEAD UPSERT ERROR ===");
       } else {
-        // Send the booking confirmation email ONLY on a true transition
-        // into "Booked" — i.e. it wasn't Booked before this turn, and it
-        // is now. This prevents re-sending the email on every subsequent
-        // message after booking (e.g. visitor says "thanks!" afterward).
         const wasAlreadyBooked = existingLead?.status === "Booked";
         const isNowBooked = newStatus === "Booked";
 
         if (isNowBooked && !wasAlreadyBooked && mergedData.email) {
-          // Fire-and-forget pattern, but we DO await it so we can log
-          // failures — we just never let a failure here affect the
-          // chat response the visitor sees. A broken confirmation email
-          // should not break the conversation itself.
           const emailResult = await sendBookingConfirmation({
             toEmail: mergedData.email,
             leadName: mergedData.name || "",

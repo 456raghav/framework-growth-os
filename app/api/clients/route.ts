@@ -9,10 +9,7 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json({ clients: data });
@@ -21,17 +18,12 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-
-    const { name, industry, location, website, services, faqs, calendarLink } = body;
+    const { name, industry, location, website, services, faqs, calendarLink, customKnowledge } = body;
 
     if (!name) {
-      return NextResponse.json(
-        { error: "Business name is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Business name is required" }, { status: 400 });
     }
 
-    // 1. Create the client record first
     const { data: client, error: clientError } = await supabaseAdmin
       .from("clients")
       .insert({
@@ -42,6 +34,7 @@ export async function POST(request: Request) {
         services,
         faqs,
         calendar_link: calendarLink,
+        custom_knowledge: customKnowledge || null,
       })
       .select()
       .single();
@@ -53,10 +46,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Return the client immediately — don't block on crawl
-    // Crawl runs after response is sent (fire-and-forget)
-    // This prevents Vercel/serverless timeout on large sites
-
     let crawlStatus = {
       started: false,
       pagesFound: 0,
@@ -67,7 +56,6 @@ export async function POST(request: Request) {
     if (website) {
       try {
         console.log(`[Crawl] Starting for client ${client.id}: ${website}`);
-
         const crawlResult = await crawlWebsite(website);
 
         if (crawlResult.pages.length > 0) {
@@ -86,9 +74,7 @@ export async function POST(request: Request) {
             console.error("[Crawl] Insert error:", insertError);
           }
 
-          console.log(
-            `[Crawl] Stored ${knowledgePages.length} pages for ${client.name}`
-          );
+          console.log(`[Crawl] Stored ${knowledgePages.length} pages for ${client.name}`);
         }
 
         crawlStatus = {
@@ -108,17 +94,9 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      client,
-      crawlStatus,
-      success: true,
-    });
+    return NextResponse.json({ client, crawlStatus, success: true });
   } catch (error) {
     console.error("[Clients POST] Error:", error);
-
-    return NextResponse.json(
-      { error: "Failed to create client" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to create client" }, { status: 500 });
   }
 }
