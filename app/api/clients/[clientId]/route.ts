@@ -7,7 +7,6 @@ export async function PATCH(
   { params }: { params: Promise<{ clientId: string }> }
 ) {
   try {
-    // Auth check — only operators can update client settings
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -27,13 +26,13 @@ export async function PATCH(
 
     const { clientId } = await params;
     const body = await request.json();
-    const { allowedDomains, customKnowledge } = body;
+    const { allowedDomains, customKnowledge, ownerAlertEmail } = body;
 
-    // Build update object — only include fields that were actually sent
-    // so a call that only updates allowedDomains doesn't wipe customKnowledge
+    // Only update fields that were actually sent
     const updateFields: Record<string, string | null> = {};
     if (allowedDomains !== undefined) updateFields.allowed_domains = allowedDomains;
     if (customKnowledge !== undefined) updateFields.custom_knowledge = customKnowledge;
+    if (ownerAlertEmail !== undefined) updateFields.owner_alert_email = ownerAlertEmail;
 
     const { data, error } = await supabaseAdmin
       .from("clients")

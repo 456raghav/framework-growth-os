@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { extractDomain, isDomainAllowed } from "@/lib/domainValidation";
-import { sendBookingConfirmation } from "@/lib/email";
+import { sendBookingConfirmation, sendEmergencyAlert } from "@/lib/email";
 import {
   determineLeadStatus,
   calculateQualificationScore,
@@ -31,8 +31,10 @@ const responseSchema = {
         timeline: { type: SchemaType.STRING, nullable: true, description: "When they need the PROJECT done, if mentioned (e.g. '2 weeks', 'by next month')" },
         wantsToBook: { type: SchemaType.BOOLEAN, description: "True if visitor has agreed to or asked for a call/booking" },
         preferredCallTime: { type: SchemaType.STRING, nullable: true, description: "When the visitor is FREE for a phone/video call, in their own words (e.g. 'Tuesday afternoon', 'call me 3-5pm', 'anytime tomorrow'). This is different from 'timeline' — timeline is about the project deadline, this is about call availability." },
+        isEmergency: { type: SchemaType.BOOLEAN, description: "True if the visitor's situation is urgent or an emergency — e.g. no heat in winter, AC dead in summer heat, burst pipe, flooding, gas smell, no hot water, system completely broken. False for routine requests like tune-ups, inspections, or quotes." },
+        emergencyDescription: { type: SchemaType.STRING, nullable: true, description: "One sentence describing the emergency in plain English, e.g. 'AC completely dead during summer heat wave' or 'No heat overnight with temperatures dropping below freezing'. Only set when isEmergency is true." },
       },
-      required: ["wantsToBook"],
+      required: ["wantsToBook", "isEmergency"],
     },
   },
   required: ["reply", "extracted"],
@@ -42,7 +44,7 @@ async function generateWithRetry(
   model: ReturnType<typeof genAI.getGenerativeModel>,
   prompt: string,
   maxRetries = 3
-): Promise<{ reply: string; extracted: ExtractedLeadData }> {
+): Promise<{ reply: string; extracted: ExtractedLeadData & { isEmergency: boolean; emergencyDescription?: string } }> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const result = await model.generateContent(prompt);
@@ -149,10 +151,6 @@ export async function POST(request: Request) {
         )
         .join("\n\n---\n\n") || "No website knowledge available.";
 
-    // GAP 3 — inject custom knowledge above website content.
-    // Marked highest priority so it wins over crawled content on conflicts
-    // (e.g. the crawled site says "call us anytime" but custom knowledge
-    // says "not available Sundays" — the custom knowledge is ground truth).
     const customKnowledgeSection = client.custom_knowledge
       ? `\nCUSTOM BUSINESS KNOWLEDGE (highest priority — always use this over website content if there is a conflict):\n${client.custom_knowledge}\n`
       : "";
@@ -198,7 +196,7 @@ Your ONLY job is:
 1. Understand what the visitor needs
 2. Qualify them (budget, project timeline, service needed)
 3. Collect their contact details (name, email or phone)
-4. Once they agree to a call, ask WHEN they're free (specific day/time window) — do not just say "our team will reach out," ask them to tell you their availability in their own words
+4. Once they agree to a call, ask WHEN they're free (specific day/time window)
 
 You are NOT a consultant. You do NOT give strategic advice. You ask short questions, one at a time.
 
@@ -214,6 +212,14 @@ ${websiteKnowledge}
 ${customKnowledgeSection}
 ${knownFields}
 
+EMERGENCY DETECTION
+Some visitors have urgent situations that need immediate attention — AC completely dead in summer heat, no heat overnight in winter, burst pipe, flooding, gas smell, no hot water. These are emergencies. Routine requests (tune-ups, quotes, inspections) are NOT emergencies.
+
+If the visitor describes an emergency:
+- Acknowledge the urgency immediately: "That sounds urgent — let me get someone to you ASAP."
+- Still collect their contact info quickly so the owner can call them back immediately
+- Set isEmergency to true and write a one-sentence emergencyDescription
+
 CONVERSATION RULES
 - Write like WhatsApp. Short. Conversational. Human.
 - One question per message maximum.
@@ -221,19 +227,19 @@ CONVERSATION RULES
 - Never greet more than once.
 - Keep replies under 60 words whenever possible.
 - Never invent information not in the knowledge base.
-- "Timeline" (project deadline) and "preferred call time" (when they're free to talk) are DIFFERENT things — ask about them separately, don't conflate them.
+- "Timeline" (project deadline) and "preferred call time" (when they're free to talk) are DIFFERENT things.
 
 LEAD QUALIFICATION FLOW
 Step 1: Understand their need
 Step 2: Qualify (budget, project timeline)
 Step 3: Confirm interest — ask if they'd like a quick call
-Step 4: Once they agree to a call, you MUST collect their name AND (email or phone) BEFORE asking anything else. Do not skip this step even if they've already said "yes" to a call. Ask: "Great! Can I get your name and the best email or number to reach you?"
-Step 5: ONLY once you have their name AND contact info, ask: "What day/time works best for you? Our team will call you then." Capture their answer exactly as they phrase it.
+Step 4: Collect name AND (email or phone) BEFORE asking for call time
+Step 5: Ask what day/time works best
 Step 6: Confirm — "Got it [name], we'll call you at [contact] on [their stated time]. Talk soon!"
 
-CRITICAL RULE: NEVER ask for a preferred call time before you have BOTH their name and a way to contact them (email or phone). If the visitor says "yes" to a call but you don't have their name/contact yet, your NEXT message must ask for name + contact — not for timing. Check the "ALREADY KNOWN ABOUT THIS VISITOR" section above before deciding what to ask next; if name or contact is still "unknown" there, ask for it before anything else.
+CRITICAL RULE: NEVER ask for a preferred call time before you have BOTH their name and a way to contact them. Check "ALREADY KNOWN ABOUT THIS VISITOR" before deciding what to ask next.
 
-Once name + contact + service + a preferred call time are known, the conversation is complete — confirm and stop asking questions. Just answer anything else they bring up naturally.
+Once name + contact + service + preferred call time are known, confirm and stop asking questions.
 
 CONVERSATION HISTORY
 ${conversationHistory}
@@ -242,11 +248,15 @@ VISITOR'S MESSAGE
 ${message}
 
 Respond with JSON matching the schema. Extract any new information the visitor just shared.
-Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or asked to book.
+Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking.
+Set isEmergency to true ONLY if the situation is genuinely urgent — broken system, safety risk, or no heat/cooling in extreme weather.
 `;
 
     let reply: string;
-    let extracted: ExtractedLeadData = { wantsToBook: false };
+    let extracted: ExtractedLeadData & { isEmergency: boolean; emergencyDescription?: string } = {
+      wantsToBook: false,
+      isEmergency: false,
+    };
 
     try {
       const result = await generateWithRetry(model, prompt);
@@ -295,8 +305,12 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
       preferredCallTime: extracted.preferredCallTime || existingLead?.preferred_call_time || null,
     };
 
+    const isEmergency = extracted.isEmergency || existingLead?.is_emergency || false;
+    const emergencyDescription = extracted.emergencyDescription || existingLead?.emergency_description || null;
+
     console.log("=== MERGED DATA ABOUT TO BE SAVED ===");
     console.log(JSON.stringify(mergedData, null, 2));
+    console.log("isEmergency:", isEmergency);
     console.log("=== END MERGED DATA ===");
 
     const hasAnyData =
@@ -325,6 +339,8 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
             status: newStatus,
             qualification_score: score,
             last_message_at: new Date().toISOString(),
+            is_emergency: isEmergency,
+            emergency_description: emergencyDescription,
           },
           { onConflict: "client_id,conversation_id" }
         );
@@ -337,6 +353,7 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
         const wasAlreadyBooked = existingLead?.status === "Booked";
         const isNowBooked = newStatus === "Booked";
 
+        // Send booking confirmation email
         if (isNowBooked && !wasAlreadyBooked && mergedData.email) {
           const emailResult = await sendBookingConfirmation({
             toEmail: mergedData.email,
@@ -349,9 +366,32 @@ Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking or a
           if (!emailResult.success) {
             console.error("=== BOOKING CONFIRMATION EMAIL FAILED ===");
             console.error(emailResult.error);
-            console.error("=== END EMAIL ERROR ===");
           } else {
             console.log(`[Email] Booking confirmation sent to ${mergedData.email}`);
+          }
+        }
+
+        // GAP 4 — Send emergency alert to owner the FIRST time
+        // an emergency is detected. wasAlreadyEmergency check prevents
+        // spamming the owner on every subsequent message.
+        const wasAlreadyEmergency = existingLead?.is_emergency === true;
+
+        if (isEmergency && !wasAlreadyEmergency && client.owner_alert_email) {
+          const alertResult = await sendEmergencyAlert({
+            toEmail: client.owner_alert_email,
+            businessName: client.name,
+            emergencyDescription: emergencyDescription || "Emergency situation detected",
+            visitorName: mergedData.name,
+            visitorPhone: mergedData.phone,
+            visitorEmail: mergedData.email,
+            serviceNeeded: mergedData.serviceNeeded,
+          });
+
+          if (!alertResult.success) {
+            console.error("=== EMERGENCY ALERT FAILED ===");
+            console.error(alertResult.error);
+          } else {
+            console.log(`[Emergency] Alert sent to ${client.owner_alert_email}`);
           }
         }
       }

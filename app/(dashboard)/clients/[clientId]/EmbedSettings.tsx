@@ -6,15 +6,18 @@ type Props = {
   clientId: string;
   initialAllowedDomains: string | null;
   initialCustomKnowledge: string | null;
+  initialOwnerAlertEmail: string | null;
 };
 
 export default function EmbedSettings({
   clientId,
   initialAllowedDomains,
   initialCustomKnowledge,
+  initialOwnerAlertEmail,
 }: Props) {
   const [allowedDomains, setAllowedDomains] = useState(initialAllowedDomains || "");
   const [customKnowledge, setCustomKnowledge] = useState(initialCustomKnowledge || "");
+  const [ownerAlertEmail, setOwnerAlertEmail] = useState(initialOwnerAlertEmail || "");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
@@ -34,7 +37,7 @@ export default function EmbedSettings({
       const res = await fetch(`/api/clients/${clientId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowedDomains, customKnowledge }),
+        body: JSON.stringify({ allowedDomains, customKnowledge, ownerAlertEmail }),
       });
 
       if (!res.ok) {
@@ -100,6 +103,30 @@ export default function EmbedSettings({
           )}
         </div>
 
+        {/* Emergency alert email */}
+        <div>
+          <label className="text-sm font-medium text-slate-200">
+            Emergency alert email
+          </label>
+          <p className="mt-1 text-xs text-slate-400">
+            When the AI detects an emergency (AC dead in summer, no heat in winter,
+            burst pipe), it instantly emails this address so the owner can respond
+            immediately. Use the owner&apos;s personal email or a phone-linked inbox.
+          </p>
+          <input
+            value={ownerAlertEmail}
+            onChange={(e) => { setOwnerAlertEmail(e.target.value); setSaveStatus("idle"); }}
+            placeholder="e.g. owner@acmehvac.com"
+            type="email"
+            className="mt-2 w-full rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          {!ownerAlertEmail && (
+            <p className="mt-1.5 text-xs text-amber-400">
+              ⚠ No alert email set — emergency leads will not notify the owner.
+            </p>
+          )}
+        </div>
+
         {/* Custom knowledge */}
         <div>
           <label className="text-sm font-medium text-slate-200">Custom knowledge</label>
@@ -116,7 +143,7 @@ export default function EmbedSettings({
           />
         </div>
 
-        {/* Save button + feedback */}
+        {/* Save */}
         <div>
           <button
             onClick={handleSave}
@@ -125,7 +152,6 @@ export default function EmbedSettings({
           >
             {saving ? "Saving..." : "Save settings"}
           </button>
-
           {saveStatus === "success" && (
             <span className="ml-3 text-xs text-emerald-400">✓ Saved successfully.</span>
           )}

@@ -13,6 +13,14 @@ type Lead = {
   preferred_call_time: string | null;
   status: string;
   qualification_score: number | null;
+  is_emergency: boolean | null;
+  emergency_description: string | null;
+};
+
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
 };
 
 type Props = {
@@ -43,6 +51,11 @@ export default function LeadCard({ lead, readOnly = false }: Props) {
   const [updating, setUpdating] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState("");
+
   async function handleStatusChange(newStatus: string) {
     setUpdating(true);
     setErrorMsg("");
@@ -57,7 +70,6 @@ export default function LeadCard({ lead, readOnly = false }: Props) {
       });
 
       if (!res.ok) {
-        // Revert and show error if the API call failed
         setStatus(previousStatus);
         setErrorMsg("Failed to update status. Try again.");
       }
@@ -69,9 +81,61 @@ export default function LeadCard({ lead, readOnly = false }: Props) {
     setUpdating(false);
   }
 
+  async function handleTranscriptToggle() {
+    if (transcriptOpen) {
+      setTranscriptOpen(false);
+      return;
+    }
+
+    if (messages.length === 0) {
+      setTranscriptLoading(true);
+      setTranscriptError("");
+
+      try {
+        const res = await fetch(`/api/leads/${lead.id}/messages`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          setTranscriptError("Failed to load conversation.");
+        } else {
+          setMessages(data.messages || []);
+        }
+      } catch {
+        setTranscriptError("Network error. Try again.");
+      }
+
+      setTranscriptLoading(false);
+    }
+
+    setTranscriptOpen(true);
+  }
+
+  function formatTime(isoString: string) {
+    return new Date(isoString).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
   return (
     <div className="p-4 md:p-5">
-      {/* Mobile: stacked layout. Desktop: grid layout */}
+
+      {/* Emergency banner — shown at top if this is an emergency lead */}
+      {lead.is_emergency && (
+        <div className="mb-3 flex items-start gap-2 rounded-md bg-red-500/10 border border-red-500/20 px-3 py-2">
+          <span className="text-sm">🚨</span>
+          <div>
+            <p className="text-xs font-semibold text-red-400">Emergency lead</p>
+            {lead.emergency_description && (
+              <p className="text-xs text-red-300/80 mt-0.5">
+                {lead.emergency_description}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lead info grid — stacked on mobile, columns on desktop */}
       <div className="flex flex-col gap-3 md:grid md:grid-cols-[1.2fr_0.8fr_0.8fr_1fr_auto] md:gap-4 md:items-start">
 
         {/* Name + contact + service */}
@@ -85,18 +149,17 @@ export default function LeadCard({ lead, readOnly = false }: Props) {
           </p>
         </div>
 
-        {/* Mobile: show budget + timeline side by side to save space */}
+        {/* Budget + timeline — side by side on mobile */}
         <div className="flex gap-4 md:contents">
           <div className="flex-1 md:flex-none">
             <p className="text-xs text-slate-400 md:text-sm">Budget</p>
-            <p className="text-sm font-medium md:font-medium">
+            <p className="text-sm font-medium">
               {lead.budget || "Not added"}
             </p>
           </div>
-
           <div className="flex-1 md:flex-none">
             <p className="text-xs text-slate-400 md:text-sm">Project Timeline</p>
-            <p className="text-sm font-medium md:font-medium">
+            <p className="text-sm font-medium">
               {lead.timeline || "Not added"}
             </p>
           </div>
@@ -136,7 +199,11 @@ export default function LeadCard({ lead, readOnly = false }: Props) {
               }`}
             >
               {STATUS_OPTIONS.map((option) => (
-                <option key={option} value={option} className="bg-slate-900 text-white">
+                <option
+                  key={option}
+                  value={option}
+                  className="bg-slate-900 text-white"
+                >
                   {option}
                 </option>
               ))}
@@ -146,8 +213,60 @@ export default function LeadCard({ lead, readOnly = false }: Props) {
             <p className="mt-1 text-xs text-red-400">{errorMsg}</p>
           )}
         </div>
-
       </div>
+
+      {/* Transcript toggle */}
+      <div className="mt-3">
+        <button
+          onClick={handleTranscriptToggle}
+          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          {transcriptOpen ? "▲ Hide conversation" : "▼ View conversation"}
+        </button>
+      </div>
+
+      {/* Transcript panel */}
+      {transcriptOpen && (
+        <div className="mt-3 rounded-lg border border-white/10 bg-slate-900/60 p-4">
+          {transcriptLoading && (
+            <p className="text-xs text-slate-400">Loading conversation...</p>
+          )}
+          {transcriptError && (
+            <p className="text-xs text-red-400">{transcriptError}</p>
+          )}
+          {!transcriptLoading && !transcriptError && messages.length === 0 && (
+            <p className="text-xs text-slate-400">No messages found for this lead.</p>
+          )}
+          {!transcriptLoading && messages.length > 0 && (
+            <div className="space-y-3 max-h-80 overflow-y-auto">
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={
+                    msg.role === "user"
+                      ? "ml-auto max-w-[80%] text-right"
+                      : "mr-auto max-w-[80%]"
+                  }
+                >
+                  <div
+                    className={
+                      msg.role === "user"
+                        ? "inline-block rounded-2xl rounded-tr-sm bg-slate-700 px-3 py-2 text-xs text-white"
+                        : "inline-block rounded-2xl rounded-tl-sm bg-slate-800 px-3 py-2 text-xs text-slate-200"
+                    }
+                  >
+                    {msg.content}
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-600">
+                    {msg.role === "user" ? "Visitor" : "AI"} ·{" "}
+                    {formatTime(msg.created_at)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -73,7 +73,6 @@ export default async function ClientWorkspacePage({ params }: Props) {
         </p>
       </div>
 
-      {/* Status counts — 2 cols on mobile, 5 on desktop */}
       <section className="mt-4 grid grid-cols-2 gap-3 md:mt-8 md:grid-cols-5 md:gap-4">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <p className="text-xs text-slate-400 md:text-sm">New</p>
@@ -113,6 +112,7 @@ export default async function ClientWorkspacePage({ params }: Props) {
             clientId={client.id}
             initialAllowedDomains={client.allowed_domains}
             initialCustomKnowledge={client.custom_knowledge}
+            initialOwnerAlertEmail={client.owner_alert_email}
           />
         </div>
       )}
