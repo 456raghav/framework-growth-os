@@ -381,10 +381,10 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
             toEmail: client.owner_alert_email,
             businessName: client.name,
             emergencyDescription: emergencyDescription || "Emergency situation detected",
-            visitorName: mergedData.name,
-            visitorPhone: mergedData.phone,
-            visitorEmail: mergedData.email,
-            serviceNeeded: mergedData.serviceNeeded,
+            visitorName: mergedData.name ?? null,
+            visitorPhone: mergedData.phone ?? null,
+            visitorEmail: mergedData.email ?? null,
+            serviceNeeded: mergedData.serviceNeeded ?? null,
           });
 
           if (!alertResult.success) {
