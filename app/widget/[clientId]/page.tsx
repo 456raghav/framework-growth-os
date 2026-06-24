@@ -15,9 +15,6 @@ type Props = {
 
 type AuthState = "checking" | "allowed" | "denied";
 
-// Safe storage: tries localStorage first, falls back to sessionStorage,
-// then falls back to in-memory. Covers Safari private mode and any
-// browser that blocks storage APIs entirely.
 const memoryStore: Record<string, string> = {};
 
 function storageGet(key: string): string | null {
@@ -102,8 +99,6 @@ export default function WidgetPage({ params }: Props) {
     setMessage("");
     setLoading(true);
 
-    // Re-focus input after sending — important on mobile so keyboard
-    // stays up and user doesn't have to tap the input again
     setTimeout(() => inputRef.current?.focus(), 100);
 
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
@@ -165,13 +160,10 @@ export default function WidgetPage({ params }: Props) {
   }
 
   return (
-    // Use dvh (dynamic viewport height) instead of h-screen —
-    // on mobile, h-screen doesn't account for the browser chrome
-    // (address bar, bottom nav). dvh updates dynamically so the
-    // widget never gets cut off or hidden behind the keyboard.
-    <div className="flex w-screen flex-col overflow-hidden bg-white" 
-         style={{ height: '100dvh' }}>
-      
+    <div
+      className="flex w-screen flex-col overflow-hidden bg-white"
+      style={{ height: "100dvh" }}
+    >
       {/* Header */}
       <div className="flex shrink-0 items-center gap-3 bg-slate-950 px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-400 text-xs font-bold text-slate-950">
@@ -184,13 +176,15 @@ export default function WidgetPage({ params }: Props) {
         <div className="ml-auto flex h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
       </div>
 
-      {/* Messages — flex-1 takes remaining height, overflow scrolls */}
+      {/* Messages */}
       <div className="flex-1 space-y-3 overflow-y-auto p-4 pb-2">
         {messages.map((msg, index) => (
           <div
             key={index}
             className={
-              msg.role === "user" ? "ml-auto max-w-[85%]" : "mr-auto max-w-[85%]"
+              msg.role === "user"
+                ? "ml-auto max-w-[85%]"
+                : "mr-auto max-w-[85%]"
             }
           >
             <div
@@ -218,7 +212,7 @@ export default function WidgetPage({ params }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input — shrink-0 keeps it pinned at bottom, never pushed off screen */}
+      {/* Input */}
       <div className="shrink-0 flex gap-2 border-t border-slate-200 bg-white p-3">
         <input
           ref={inputRef}
@@ -227,9 +221,8 @@ export default function WidgetPage({ params }: Props) {
           onKeyDown={handleKeyDown}
           placeholder="Type your message..."
           disabled={loading}
-          // font-size 16px prevents iOS Safari from auto-zooming on focus
           className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 disabled:opacity-50"
-          style={{ fontSize: '16px' }}
+          style={{ fontSize: "16px" }}
           autoComplete="off"
           autoCorrect="off"
           spellCheck="false"
