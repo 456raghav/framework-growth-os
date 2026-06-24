@@ -1,24 +1,62 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { createHmac } from "crypto";
 
-// ElevenLabs post-call webhook — fires after every voice conversation ends.
-// Receives transcript + extracted data, creates a lead in FGOS dashboard
-// exactly like the chat widget does.
+// Verify the request actually came from ElevenLabs using HMAC signature
+function verifyElevenLabsSignature(
+  body: string,
+  signature: string | null,
+  secret: string
+): boolean {
+  if (!signature) return false;
+
+  try {
+    // ElevenLabs sends: t=timestamp,v1=signature
+    const parts = signature.split(",");
+    const timestamp = parts.find((p) => p.startsWith("t="))?.split("=")[1];
+    const v1 = parts.find((p) => p.startsWith("v1="))?.split("=")[1];
+
+    if (!timestamp || !v1) return false;
+
+    // Reject requests older than 5 minutes
+    const age = Date.now() / 1000 - parseInt(timestamp);
+    if (age > 300) {
+      console.log("[Voice Webhook] Rejected stale request, age:", age);
+      return false;
+    }
+
+    const expected = createHmac("sha256", secret)
+      .update(`${timestamp}.${body}`)
+      .digest("hex");
+
+    return expected === v1;
+  } catch {
+    return false;
+  }
+}
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const rawBody = await request.text();
+    const signature = request.headers.get("ElevenLabs-Signature");
+    const secret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
+
+    // Verify signature in production
+    if (secret && !verifyElevenLabsSignature(rawBody, signature, secret)) {
+      console.log("[Voice Webhook] Invalid signature — rejected");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+
+    const body = JSON.parse(rawBody);
 
     console.log("[Voice Webhook] Received:", JSON.stringify(body, null, 2));
 
-    // Extract the data collection fields ElevenLabs extracted from the call
     const analysis = body?.data?.analysis || {};
     const dataCollection = analysis?.data_collection_results || {};
     const transcript = body?.data?.transcript || [];
     const metadata = body?.data?.metadata || {};
     const conversationId = body?.data?.conversation_id || `voice_${Date.now()}`;
 
-    // Pull extracted lead fields
     const callerName = dataCollection?.caller_name?.value || null;
     const callerPhone = dataCollection?.caller_phone?.value || null;
     const callerEmail = dataCollection?.caller_email?.value || null;
@@ -27,16 +65,12 @@ export async function POST(request: Request) {
     const preferredCallTime = dataCollection?.preferred_call_time?.value || null;
     const propertyType = dataCollection?.property_type?.value || null;
 
-    // Build conversation summary from transcript
     const conversationText = transcript
       .map((t: { role: string; message: string }) =>
         `${t.role === "agent" ? "AI" : "Caller"}: ${t.message}`
       )
       .join("\n");
 
-    // We need a client_id to store the lead against.
-    // ElevenLabs passes agent_id in the webhook — we map agent_id to client_id
-    // in the clients table via the elevenlabs_agent_id column we'll add.
     const agentId = body?.data?.agent_id || metadata?.agent_id || null;
 
     let clientId: string | null = null;
@@ -51,11 +85,9 @@ export async function POST(request: Request) {
       clientId = client?.id || null;
     }
 
-    // If no client found for this agent, log and return
-    // This prevents orphaned leads with no client association
     if (!clientId) {
       console.log(
-        `[Voice Webhook] No client found for agent_id: ${agentId} — skipping lead creation`
+        `[Voice Webhook] No client found for agent_id: ${agentId} — skipping`
       );
       return NextResponse.json({
         message: "No client mapped to this agent",
@@ -63,7 +95,6 @@ export async function POST(request: Request) {
       });
     }
 
-    // Determine lead status based on what was collected
     let status = "New";
     if (callerPhone || callerEmail) status = "Qualified";
     if (preferredCallTime && (callerPhone || callerEmail)) status = "Callback Requested";
@@ -75,8 +106,6 @@ export async function POST(request: Request) {
       ? `HVAC service (${propertyType})`
       : "HVAC service";
 
-    // Upsert lead — use voice_ prefix on conversationId to distinguish
-    // voice leads from chat widget leads in the dashboard
     const { error: upsertError } = await supabaseAdmin
       .from("leads")
       .upsert(
