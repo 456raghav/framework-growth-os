@@ -26,13 +26,14 @@ export async function PATCH(
 
     const { clientId } = await params;
     const body = await request.json();
-    const { allowedDomains, customKnowledge, ownerAlertEmail } = body;
+    const { allowedDomains, customKnowledge, ownerAlertEmail, followupChannel, ownerPhone } = body;
 
-    // Only update fields that were actually sent
     const updateFields: Record<string, string | null> = {};
     if (allowedDomains !== undefined) updateFields.allowed_domains = allowedDomains;
     if (customKnowledge !== undefined) updateFields.custom_knowledge = customKnowledge;
     if (ownerAlertEmail !== undefined) updateFields.owner_alert_email = ownerAlertEmail;
+    if (followupChannel !== undefined) updateFields.followup_channel = followupChannel;
+    if (ownerPhone !== undefined) updateFields.owner_phone = ownerPhone;
 
     const { data, error } = await supabaseAdmin
       .from("clients")

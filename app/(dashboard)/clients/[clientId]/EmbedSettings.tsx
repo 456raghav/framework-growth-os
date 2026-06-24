@@ -7,6 +7,8 @@ type Props = {
   initialAllowedDomains: string | null;
   initialCustomKnowledge: string | null;
   initialOwnerAlertEmail: string | null;
+  initialFollowupChannel: string | null;
+  initialOwnerPhone: string | null;
 };
 
 export default function EmbedSettings({
@@ -14,10 +16,14 @@ export default function EmbedSettings({
   initialAllowedDomains,
   initialCustomKnowledge,
   initialOwnerAlertEmail,
+  initialFollowupChannel,
+  initialOwnerPhone,
 }: Props) {
   const [allowedDomains, setAllowedDomains] = useState(initialAllowedDomains || "");
   const [customKnowledge, setCustomKnowledge] = useState(initialCustomKnowledge || "");
   const [ownerAlertEmail, setOwnerAlertEmail] = useState(initialOwnerAlertEmail || "");
+  const [followupChannel, setFollowupChannel] = useState(initialFollowupChannel || "email");
+  const [ownerPhone, setOwnerPhone] = useState(initialOwnerPhone || "");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
@@ -37,7 +43,13 @@ export default function EmbedSettings({
       const res = await fetch(`/api/clients/${clientId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowedDomains, customKnowledge, ownerAlertEmail }),
+        body: JSON.stringify({
+          allowedDomains,
+          customKnowledge,
+          ownerAlertEmail,
+          followupChannel,
+          ownerPhone,
+        }),
       });
 
       if (!res.ok) {
@@ -86,7 +98,9 @@ export default function EmbedSettings({
 
         {/* Authorized domain */}
         <div>
-          <label className="text-sm font-medium text-slate-200">Authorized domain</label>
+          <label className="text-sm font-medium text-slate-200">
+            Authorized domain
+          </label>
           <p className="mt-1 text-xs text-slate-400">
             The widget only runs on these domains. Comma-separated if multiple.
           </p>
@@ -103,15 +117,59 @@ export default function EmbedSettings({
           )}
         </div>
 
+        {/* Follow-up channel */}
+        <div>
+          <label className="text-sm font-medium text-slate-200">
+            Follow-up channel
+          </label>
+          <p className="mt-1 text-xs text-slate-400">
+            How cold leads get nudged after 24 hours of silence.
+            Use SMS for US clients, WhatsApp for Indian clients, Email as default.
+          </p>
+          <select
+            value={followupChannel}
+            onChange={(e) => { setFollowupChannel(e.target.value); setSaveStatus("idle"); }}
+            className="mt-2 w-full rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          >
+            <option value="email">Email (default — works everywhere)</option>
+            <option value="sms">SMS (US clients — via Twilio)</option>
+            <option value="whatsapp">WhatsApp (India clients — pending Meta verification)</option>
+          </select>
+          {followupChannel === "whatsapp" && (
+            <p className="mt-1.5 text-xs text-amber-400">
+              ⚠ WhatsApp is pending Meta business verification. Will fall back to email until verified.
+            </p>
+          )}
+        </div>
+
+        {/* Owner phone — shown when SMS or WhatsApp selected */}
+        {(followupChannel === "sms" || followupChannel === "whatsapp") && (
+          <div>
+            <label className="text-sm font-medium text-slate-200">
+              {followupChannel === "sms" ? "Lead follow-up number (Twilio)" : "Lead follow-up number (WhatsApp)"}
+            </label>
+            <p className="mt-1 text-xs text-slate-400">
+              {followupChannel === "sms"
+                ? "The Twilio number that sends SMS follow-ups to cold leads. Include country code (e.g. +14155552671)."
+                : "The WhatsApp Business number that sends follow-ups. Include country code (e.g. +919798888730)."}
+            </p>
+            <input
+              value={ownerPhone}
+              onChange={(e) => { setOwnerPhone(e.target.value); setSaveStatus("idle"); }}
+              placeholder={followupChannel === "sms" ? "+14155552671" : "+919798888730"}
+              className="mt-2 w-full rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+            />
+          </div>
+        )}
+
         {/* Emergency alert email */}
         <div>
           <label className="text-sm font-medium text-slate-200">
             Emergency alert email
           </label>
           <p className="mt-1 text-xs text-slate-400">
-            When the AI detects an emergency (AC dead in summer, no heat in winter,
-            burst pipe), it instantly emails this address so the owner can respond
-            immediately. Use the owner&apos;s personal email or a phone-linked inbox.
+            When the AI detects an emergency, it instantly emails this address
+            so the owner can respond immediately.
           </p>
           <input
             value={ownerAlertEmail}
@@ -129,10 +187,12 @@ export default function EmbedSettings({
 
         {/* Custom knowledge */}
         <div>
-          <label className="text-sm font-medium text-slate-200">Custom knowledge</label>
+          <label className="text-sm font-medium text-slate-200">
+            Custom knowledge
+          </label>
           <p className="mt-1 text-xs text-slate-400">
             Anything the AI should know that&apos;s not on the website — service area,
-            pricing, brands serviced, fees, team info, availability. Plain text.
+            pricing, brands serviced, fees, availability. Plain text.
           </p>
           <textarea
             value={customKnowledge}

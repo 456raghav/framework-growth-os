@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sendNurtureEmail } from "@/lib/nurtureEmail";
+import { sendSMS, sendWhatsApp } from "@/lib/sms";
 
 const COLD_THRESHOLD_HOURS = 24;
 
+function buildNurtureMessage(
+  leadName: string,
+  businessName: string,
+  serviceNeeded: string | null
+): string {
+  const name = leadName || "there";
+  const service = serviceNeeded ? ` about ${serviceNeeded}` : "";
+  return `Hi ${name}, you reached out to ${businessName}${service} a little while back. Still interested? Reply YES and we'll get you sorted — no pressure.`;
+}
+
 export async function POST(request: Request) {
-  // Verify this request actually came from our own cron job, not a
-  // stranger who found the URL. Without this check, anyone could hit
-  // this endpoint repeatedly and trigger mass emails to every cold lead
-  // on demand — this is the one route in the app that runs with no
-  // human in the loop, so it needs its own gate.
   const authHeader = request.headers.get("authorization");
   const expectedSecret = `Bearer ${process.env.CRON_SECRET}`;
 
@@ -27,19 +33,15 @@ export async function POST(request: Request) {
     Date.now() - COLD_THRESHOLD_HOURS * 60 * 60 * 1000
   ).toISOString();
 
-  // Find leads that are:
-  // - Not already Booked (they're handled by the confirmation email)
-  // - Not Lost (don't nurture leads you've marked as dead ends)
-  // - Have an email (nothing to nurture without a way to reach them)
-  // - Last activity was MORE than 24 hours ago (genuinely gone cold)
-  // - Have NEVER been nudged before (the anti-spam guard)
+  // Fetch cold leads — same criteria as before but now also pull phone
+  // so we can SMS/WhatsApp leads that have a phone but no email
   const { data: coldLeads, error: queryError } = await supabaseAdmin
     .from("leads")
-    .select("id, client_id, name, email, service_needed")
+    .select("id, client_id, name, email, phone, service_needed")
     .not("status", "in", "(Booked,Lost)")
-    .not("email", "is", null)
     .lt("last_message_at", cutoffTime)
-    .is("nurture_sent_at", null);
+    .is("nurture_sent_at", null)
+    .or("email.not.is.null,phone.not.is.null");
 
   if (queryError) {
     console.error("Nurture query failed:", queryError);
@@ -50,38 +52,95 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "No cold leads found", sent: 0 });
   }
 
-  // We need each lead's business name, which means fetching the
-  // associated client. Doing this per-lead is simple and fine at MVP
-  // volume — would batch this if lead counts grew large.
   let sentCount = 0;
   let failedCount = 0;
 
   for (const lead of coldLeads) {
+    // Fetch client with followup_channel so we know which channel to use
     const { data: client } = await supabaseAdmin
       .from("clients")
-      .select("name")
+      .select("name, followup_channel, owner_phone")
       .eq("id", lead.client_id)
       .single();
 
     if (!client) continue;
 
-    const result = await sendNurtureEmail({
-      toEmail: lead.email,
-      leadName: lead.name || "",
-      businessName: client.name,
-      serviceNeeded: lead.service_needed,
-    });
+    const channel = client.followup_channel || "email";
+    const nurtureMessage = buildNurtureMessage(
+      lead.name,
+      client.name,
+      lead.service_needed
+    );
+
+    let result: { success: boolean; error?: string };
+
+    if (channel === "sms" && lead.phone) {
+      // US client — send SMS via Twilio
+      result = await sendSMS({
+        toPhone: lead.phone,
+        message: nurtureMessage,
+      });
+
+      // Fallback to email if SMS fails and email exists
+      if (!result.success && lead.email) {
+        console.log(
+          `[Nurture] SMS failed for lead ${lead.id}, falling back to email`
+        );
+        result = await sendNurtureEmail({
+          toEmail: lead.email,
+          leadName: lead.name || "",
+          businessName: client.name,
+          serviceNeeded: lead.service_needed,
+        });
+      }
+    } else if (channel === "whatsapp" && lead.phone) {
+      // India client — send WhatsApp
+      // Currently returns error until Meta verification clears.
+      // Falls back to email automatically.
+      result = await sendWhatsApp({
+        toPhone: lead.phone,
+        message: nurtureMessage,
+      });
+
+      if (!result.success && lead.email) {
+        console.log(
+          `[Nurture] WhatsApp failed for lead ${lead.id}, falling back to email`
+        );
+        result = await sendNurtureEmail({
+          toEmail: lead.email,
+          leadName: lead.name || "",
+          businessName: client.name,
+          serviceNeeded: lead.service_needed,
+        });
+      }
+    } else if (lead.email) {
+      // Default — email only
+      result = await sendNurtureEmail({
+        toEmail: lead.email,
+        leadName: lead.name || "",
+        businessName: client.name,
+        serviceNeeded: lead.service_needed,
+      });
+    } else {
+      // No contact method available
+      console.log(
+        `[Nurture] Lead ${lead.id} has no email or phone — skipping`
+      );
+      continue;
+    }
 
     if (result.success) {
       sentCount++;
-      // Mark this lead as nudged so it's never emailed again by this job
       await supabaseAdmin
         .from("leads")
         .update({ nurture_sent_at: new Date().toISOString() })
         .eq("id", lead.id);
     } else {
       failedCount++;
-      console.error(`Nurture email failed for lead ${lead.id}:`, result.error);
+      console.error(
+        `[Nurture] All channels failed for lead ${lead.id}:`,
+        result.error
+      );
     }
   }
 

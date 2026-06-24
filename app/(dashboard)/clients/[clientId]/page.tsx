@@ -113,6 +113,8 @@ export default async function ClientWorkspacePage({ params }: Props) {
             initialAllowedDomains={client.allowed_domains}
             initialCustomKnowledge={client.custom_knowledge}
             initialOwnerAlertEmail={client.owner_alert_email}
+            initialFollowupChannel={client.followup_channel}
+            initialOwnerPhone={client.owner_phone}
           />
         </div>
       )}
