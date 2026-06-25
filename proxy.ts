@@ -41,7 +41,9 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/widget") ||
     request.nextUrl.pathname.startsWith("/api/chat") ||
     request.nextUrl.pathname.startsWith("/api/embed-config") ||
-    request.nextUrl.pathname.startsWith("/api/cron");
+    request.nextUrl.pathname.startsWith("/api/cron") ||
+    request.nextUrl.pathname.startsWith("/api/voice") ||
+    request.nextUrl.pathname.startsWith("/api/test-sms");
 
   // Protect dashboard routes — redirect to /login if not authenticated.
   // Widget, public chat API, and cron routes stay open (visitors never

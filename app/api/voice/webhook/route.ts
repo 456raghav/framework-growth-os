@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+// ElevenLabs sends a GET request to verify the webhook endpoint
+// exists before sending POST requests with actual call data
+export async function GET() {
+  return NextResponse.json({ status: "FGOS voice webhook active" });
+}
+
 export async function POST(request: Request) {
   try {
     const rawBody = await request.text();
@@ -45,7 +51,6 @@ export async function POST(request: Request) {
       .map((t) => `${t.role === "agent" ? "AI" : "Caller"}: ${t.message}`)
       .join("\n");
 
-    // Look up client by agent ID
     let clientId: string | null = null;
 
     if (agentId) {
@@ -65,7 +70,6 @@ export async function POST(request: Request) {
 
     if (!clientId) {
       console.log(`[Voice Webhook] No client found for agent_id: ${agentId}`);
-      console.log("[Voice Webhook] Checking all clients with elevenlabs_agent_id set:");
 
       const { data: allClients } = await supabaseAdmin
         .from("clients")
