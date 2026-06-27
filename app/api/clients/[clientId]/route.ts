@@ -26,7 +26,7 @@ export async function PATCH(
 
     const { clientId } = await params;
     const body = await request.json();
-    const { allowedDomains, customKnowledge, ownerAlertEmail, followupChannel, ownerPhone } = body;
+    const { allowedDomains, customKnowledge, ownerAlertEmail, followupChannel, ownerPhone, calendarLink } = body;
 
     const updateFields: Record<string, string | null> = {};
     if (allowedDomains !== undefined) updateFields.allowed_domains = allowedDomains;
@@ -34,6 +34,7 @@ export async function PATCH(
     if (ownerAlertEmail !== undefined) updateFields.owner_alert_email = ownerAlertEmail;
     if (followupChannel !== undefined) updateFields.followup_channel = followupChannel;
     if (ownerPhone !== undefined) updateFields.owner_phone = ownerPhone;
+    if (calendarLink !== undefined) updateFields.calendar_link = calendarLink;
 
     const { data, error } = await supabaseAdmin
       .from("clients")

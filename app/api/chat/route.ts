@@ -155,6 +155,12 @@ export async function POST(request: Request) {
       ? `\nCUSTOM BUSINESS KNOWLEDGE (highest priority — always use this over website content if there is a conflict):\n${client.custom_knowledge}\n`
       : "";
 
+    // Calendly / calendar booking link — injected into prompt so AI
+    // shares it at the right moment instead of just capturing text
+    const calendarLinkSection = client.calendar_link
+      ? `\nCALENDAR BOOKING LINK: ${client.calendar_link}\nWhen the visitor agrees to a call or asks how to book, share this link directly in your message. Say something like: "You can pick a time that works for you here: ${client.calendar_link}" — send the full URL so they can click it.`
+      : "";
+
     const conversationHistory =
       previousMessages
         ?.reverse()
@@ -189,6 +195,10 @@ Preferred Call Time: ${existingLead.preferred_call_time || "unknown"}
 Do not re-ask for information already known above. Only ask for what's still missing.`
       : "Nothing known about this visitor yet.";
 
+    const bookingStep = client.calendar_link
+      ? `Step 6: Share the booking link — say "You can pick a time here: ${client.calendar_link}" and confirm you've sent it. The visitor self-books directly.`
+      : `Step 6: Confirm — "Got it [name], we'll call you at [contact] on [their stated time]. Talk soon!"`;
+
     const prompt = `
 You are an AI sales assistant for ${client.name}.
 
@@ -196,7 +206,7 @@ Your ONLY job is:
 1. Understand what the visitor needs
 2. Qualify them (budget, project timeline, service needed)
 3. Collect their contact details (name, email or phone)
-4. Once they agree to a call, ask WHEN they're free (specific day/time window)
+4. Once they agree to a call, send them the booking link or ask when they're free
 
 You are NOT a consultant. You do NOT give strategic advice. You ask short questions, one at a time.
 
@@ -210,6 +220,7 @@ FAQs: ${client.faqs}
 WEBSITE KNOWLEDGE
 ${websiteKnowledge}
 ${customKnowledgeSection}
+${calendarLinkSection}
 ${knownFields}
 
 EMERGENCY DETECTION
@@ -233,13 +244,13 @@ LEAD QUALIFICATION FLOW
 Step 1: Understand their need
 Step 2: Qualify (budget, project timeline)
 Step 3: Confirm interest — ask if they'd like a quick call
-Step 4: Collect name AND (email or phone) BEFORE asking for call time
-Step 5: Ask what day/time works best
-Step 6: Confirm — "Got it [name], we'll call you at [contact] on [their stated time]. Talk soon!"
+Step 4: Collect name AND (email or phone) BEFORE anything else
+Step 5: Ask what day/time works best (skip if calendar link — send link instead)
+${bookingStep}
 
 CRITICAL RULE: NEVER ask for a preferred call time before you have BOTH their name and a way to contact them. Check "ALREADY KNOWN ABOUT THIS VISITOR" before deciding what to ask next.
 
-Once name + contact + service + preferred call time are known, confirm and stop asking questions.
+Once name + contact + service are known and booking is handled, confirm and stop asking questions.
 
 CONVERSATION HISTORY
 ${conversationHistory}
@@ -353,7 +364,6 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
         const wasAlreadyBooked = existingLead?.status === "Booked";
         const isNowBooked = newStatus === "Booked";
 
-        // Send booking confirmation email
         if (isNowBooked && !wasAlreadyBooked && mergedData.email) {
           const emailResult = await sendBookingConfirmation({
             toEmail: mergedData.email,
@@ -371,9 +381,6 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
           }
         }
 
-        // GAP 4 — Send emergency alert to owner the FIRST time
-        // an emergency is detected. wasAlreadyEmergency check prevents
-        // spamming the owner on every subsequent message.
         const wasAlreadyEmergency = existingLead?.is_emergency === true;
 
         if (isEmergency && !wasAlreadyEmergency && client.owner_alert_email) {

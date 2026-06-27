@@ -9,6 +9,7 @@ type Props = {
   initialOwnerAlertEmail: string | null;
   initialFollowupChannel: string | null;
   initialOwnerPhone: string | null;
+  initialCalendarLink: string | null;
 };
 
 export default function EmbedSettings({
@@ -18,12 +19,14 @@ export default function EmbedSettings({
   initialOwnerAlertEmail,
   initialFollowupChannel,
   initialOwnerPhone,
+  initialCalendarLink,
 }: Props) {
   const [allowedDomains, setAllowedDomains] = useState(initialAllowedDomains || "");
   const [customKnowledge, setCustomKnowledge] = useState(initialCustomKnowledge || "");
   const [ownerAlertEmail, setOwnerAlertEmail] = useState(initialOwnerAlertEmail || "");
   const [followupChannel, setFollowupChannel] = useState(initialFollowupChannel || "email");
   const [ownerPhone, setOwnerPhone] = useState(initialOwnerPhone || "");
+  const [calendarLink, setCalendarLink] = useState(initialCalendarLink || "");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
@@ -49,6 +52,7 @@ export default function EmbedSettings({
           ownerAlertEmail,
           followupChannel,
           ownerPhone,
+          calendarLink,
         }),
       });
 
@@ -117,6 +121,28 @@ export default function EmbedSettings({
           )}
         </div>
 
+        {/* Calendar booking link */}
+        <div>
+          <label className="text-sm font-medium text-slate-200">
+            Calendar booking link
+          </label>
+          <p className="mt-1 text-xs text-slate-400">
+            When a lead agrees to a call, the AI shares this link so they can
+            self-book. Use Calendly, Cal.com, or any scheduling link.
+          </p>
+          <input
+            value={calendarLink}
+            onChange={(e) => { setCalendarLink(e.target.value); setSaveStatus("idle"); }}
+            placeholder="e.g. https://calendly.com/your-name/30min"
+            className="mt-2 w-full rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+          />
+          {!calendarLink && (
+            <p className="mt-1.5 text-xs text-amber-400">
+              ⚠ No booking link set — AI will capture preferred time as text only.
+            </p>
+          )}
+        </div>
+
         {/* Follow-up channel */}
         <div>
           <label className="text-sm font-medium text-slate-200">
@@ -142,7 +168,7 @@ export default function EmbedSettings({
           )}
         </div>
 
-        {/* Owner phone — shown when SMS or WhatsApp selected */}
+        {/* Owner phone */}
         {(followupChannel === "sms" || followupChannel === "whatsapp") && (
           <div>
             <label className="text-sm font-medium text-slate-200">
