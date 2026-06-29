@@ -115,6 +115,7 @@ export default async function ClientWorkspacePage({ params }: Props) {
             initialOwnerAlertEmail={client.owner_alert_email}
             initialFollowupChannel={client.followup_channel}
             initialOwnerPhone={client.owner_phone}
+            initialCalendarLink={client.calendar_link}
           />
         </div>
       )}
