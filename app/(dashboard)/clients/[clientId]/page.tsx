@@ -116,6 +116,7 @@ export default async function ClientWorkspacePage({ params }: Props) {
             initialFollowupChannel={client.followup_channel}
             initialOwnerPhone={client.owner_phone}
             initialCalendarLink={client.calendar_link}
+            initialShopAddress={client.shop_address}
           />
         </div>
       )}
