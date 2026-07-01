@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { extractDomain, isDomainAllowed } from "@/lib/domainValidation";
 import { sendBookingConfirmation, sendEmergencyAlert } from "@/lib/email";
+import { geocodeZip } from "@/lib/geocode";
 import {
   determineLeadStatus,
   calculateQualificationScore,
@@ -26,13 +27,14 @@ const responseSchema = {
         name: { type: SchemaType.STRING, nullable: true, description: "Visitor's name, if mentioned" },
         email: { type: SchemaType.STRING, nullable: true, description: "Visitor's email, if mentioned" },
         phone: { type: SchemaType.STRING, nullable: true, description: "Visitor's phone number, if mentioned" },
+        zipCode: { type: SchemaType.STRING, nullable: true, description: "Visitor's zip/postal code or area, if mentioned. Used only to plot approximate service location on a map — never store exact street address here." },
         serviceNeeded: { type: SchemaType.STRING, nullable: true, description: "What service/product they need" },
         budget: { type: SchemaType.STRING, nullable: true, description: "Budget mentioned, if any" },
         timeline: { type: SchemaType.STRING, nullable: true, description: "When they need the PROJECT done, if mentioned (e.g. '2 weeks', 'by next month')" },
         wantsToBook: { type: SchemaType.BOOLEAN, description: "True if visitor has agreed to or asked for a call/booking" },
-        preferredCallTime: { type: SchemaType.STRING, nullable: true, description: "When the visitor is FREE for a phone/video call, in their own words (e.g. 'Tuesday afternoon', 'call me 3-5pm', 'anytime tomorrow'). This is different from 'timeline' — timeline is about the project deadline, this is about call availability." },
-        isEmergency: { type: SchemaType.BOOLEAN, description: "True if the visitor's situation is urgent or an emergency — e.g. no heat in winter, AC dead in summer heat, burst pipe, flooding, gas smell, no hot water, system completely broken. False for routine requests like tune-ups, inspections, or quotes." },
-        emergencyDescription: { type: SchemaType.STRING, nullable: true, description: "One sentence describing the emergency in plain English, e.g. 'AC completely dead during summer heat wave' or 'No heat overnight with temperatures dropping below freezing'. Only set when isEmergency is true." },
+        preferredCallTime: { type: SchemaType.STRING, nullable: true, description: "When the visitor is FREE for a phone/video call, in their own words." },
+        isEmergency: { type: SchemaType.BOOLEAN, description: "True if the visitor's situation is urgent or an emergency." },
+        emergencyDescription: { type: SchemaType.STRING, nullable: true, description: "One sentence describing the emergency. Only set when isEmergency is true." },
       },
       required: ["wantsToBook", "isEmergency"],
     },
@@ -44,7 +46,7 @@ async function generateWithRetry(
   model: ReturnType<typeof genAI.getGenerativeModel>,
   prompt: string,
   maxRetries = 3
-): Promise<{ reply: string; extracted: ExtractedLeadData & { isEmergency: boolean; emergencyDescription?: string } }> {
+): Promise<{ reply: string; extracted: ExtractedLeadData & { zipCode?: string | null; isEmergency: boolean; emergencyDescription?: string } }> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const result = await model.generateContent(prompt);
@@ -155,8 +157,6 @@ export async function POST(request: Request) {
       ? `\nCUSTOM BUSINESS KNOWLEDGE (highest priority — always use this over website content if there is a conflict):\n${client.custom_knowledge}\n`
       : "";
 
-    // Calendly / calendar booking link — injected into prompt so AI
-    // shares it at the right moment instead of just capturing text
     const calendarLinkSection = client.calendar_link
       ? `\nCALENDAR BOOKING LINK: ${client.calendar_link}\nWhen the visitor agrees to a call or asks how to book, share this link directly in your message. Say something like: "You can pick a time that works for you here: ${client.calendar_link}" — send the full URL so they can click it.`
       : "";
@@ -187,6 +187,7 @@ export async function POST(request: Request) {
 Name: ${existingLead.name || "unknown"}
 Email: ${existingLead.email || "unknown"}
 Phone: ${existingLead.phone || "unknown"}
+Zip/Area: ${existingLead.zip_code || "unknown"}
 Service: ${existingLead.service_needed || "unknown"}
 Budget: ${existingLead.budget || "unknown"}
 Project Timeline: ${existingLead.timeline || "unknown"}
@@ -205,7 +206,7 @@ You are an AI sales assistant for ${client.name}.
 Your ONLY job is:
 1. Understand what the visitor needs
 2. Qualify them (budget, project timeline, service needed)
-3. Collect their contact details (name, email or phone)
+3. Collect their contact details (name, email or phone) and their zip code or area (for service dispatch)
 4. Once they agree to a call, send them the booking link or ask when they're free
 
 You are NOT a consultant. You do NOT give strategic advice. You ask short questions, one at a time.
@@ -224,9 +225,7 @@ ${calendarLinkSection}
 ${knownFields}
 
 EMERGENCY DETECTION
-Some visitors have urgent situations that need immediate attention — AC completely dead in summer heat, no heat overnight in winter, burst pipe, flooding, gas smell, no hot water. These are emergencies. Routine requests (tune-ups, quotes, inspections) are NOT emergencies.
-
-If the visitor describes an emergency:
+Some visitors have urgent situations that need immediate attention. If the visitor describes an emergency:
 - Acknowledge the urgency immediately: "That sounds urgent — let me get someone to you ASAP."
 - Still collect their contact info quickly so the owner can call them back immediately
 - Set isEmergency to true and write a one-sentence emergencyDescription
@@ -244,13 +243,13 @@ LEAD QUALIFICATION FLOW
 Step 1: Understand their need
 Step 2: Qualify (budget, project timeline)
 Step 3: Confirm interest — ask if they'd like a quick call
-Step 4: Collect name AND (email or phone) BEFORE anything else
+Step 4: Collect name AND (email or phone) AND their zip code/area (for service dispatch)
 Step 5: Ask what day/time works best (skip if calendar link — send link instead)
 ${bookingStep}
 
 CRITICAL RULE: NEVER ask for a preferred call time before you have BOTH their name and a way to contact them. Check "ALREADY KNOWN ABOUT THIS VISITOR" before deciding what to ask next.
 
-Once name + contact + service are known and booking is handled, confirm and stop asking questions.
+Once name + contact + service + zip are known and booking is handled, confirm and stop asking questions.
 
 CONVERSATION HISTORY
 ${conversationHistory}
@@ -260,11 +259,11 @@ ${message}
 
 Respond with JSON matching the schema. Extract any new information the visitor just shared.
 Set wantsToBook to true ONLY if they've explicitly agreed to a call/booking.
-Set isEmergency to true ONLY if the situation is genuinely urgent — broken system, safety risk, or no heat/cooling in extreme weather.
+Set isEmergency to true ONLY if the situation is genuinely urgent.
 `;
 
     let reply: string;
-    let extracted: ExtractedLeadData & { isEmergency: boolean; emergencyDescription?: string } = {
+    let extracted: ExtractedLeadData & { zipCode?: string | null; isEmergency: boolean; emergencyDescription?: string } = {
       wantsToBook: false,
       isEmergency: false,
     };
@@ -273,19 +272,8 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
       const result = await generateWithRetry(model, prompt);
       reply = result.reply;
       extracted = result.extracted;
-      console.log("=== RAW GEMINI EXTRACTION THIS TURN ===");
-      console.log(JSON.stringify(extracted, null, 2));
-      console.log("=== EXISTING LEAD BEFORE MERGE ===");
-      console.log(JSON.stringify(existingLead, null, 2));
-      console.log("=== END EXTRACTION DEBUG ===");
     } catch (error: unknown) {
-      console.error("=== GEMINI CALL FAILED ===");
-      console.error(error);
-      if (error instanceof Error) {
-        console.error("Error message:", error.message);
-        console.error("Error stack:", error.stack);
-      }
-      console.error("=== END ERROR ===");
+      console.error("=== GEMINI CALL FAILED ===", error);
 
       const isRateLimit =
         error instanceof Error &&
@@ -305,10 +293,11 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
       content: reply,
     });
 
-    const mergedData: ExtractedLeadData = {
+    const mergedData: ExtractedLeadData & { zipCode?: string | null } = {
       name: extracted.name || existingLead?.name || null,
       email: extracted.email || existingLead?.email || null,
       phone: extracted.phone || existingLead?.phone || null,
+      zipCode: extracted.zipCode || existingLead?.zip_code || null,
       serviceNeeded: extracted.serviceNeeded || existingLead?.service_needed || null,
       budget: extracted.budget || existingLead?.budget || null,
       timeline: extracted.timeline || existingLead?.timeline || null,
@@ -318,11 +307,6 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
 
     const isEmergency = extracted.isEmergency || existingLead?.is_emergency || false;
     const emergencyDescription = extracted.emergencyDescription || existingLead?.emergency_description || null;
-
-    console.log("=== MERGED DATA ABOUT TO BE SAVED ===");
-    console.log(JSON.stringify(mergedData, null, 2));
-    console.log("isEmergency:", isEmergency);
-    console.log("=== END MERGED DATA ===");
 
     const hasAnyData =
       mergedData.name || mergedData.email || mergedData.phone || mergedData.serviceNeeded;
@@ -334,6 +318,19 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
       );
       const score = calculateQualificationScore(mergedData);
 
+      // Geocode zip only if it's new or changed — avoid repeat API calls
+      let latitude = existingLead?.latitude || null;
+      let longitude = existingLead?.longitude || null;
+      const zipChanged = mergedData.zipCode && mergedData.zipCode !== existingLead?.zip_code;
+
+      if (zipChanged) {
+        const coords = await geocodeZip(mergedData.zipCode!);
+        if (coords) {
+          latitude = coords.lat;
+          longitude = coords.lng;
+        }
+      }
+
       const { error: upsertError } = await supabaseAdmin
         .from("leads")
         .upsert(
@@ -343,6 +340,7 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
             name: mergedData.name,
             email: mergedData.email,
             phone: mergedData.phone,
+            zip_code: mergedData.zipCode,
             service_needed: mergedData.serviceNeeded,
             budget: mergedData.budget,
             timeline: mergedData.timeline,
@@ -352,14 +350,14 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
             last_message_at: new Date().toISOString(),
             is_emergency: isEmergency,
             emergency_description: emergencyDescription,
+            latitude,
+            longitude,
           },
           { onConflict: "client_id,conversation_id" }
         );
 
       if (upsertError) {
-        console.error("=== LEAD UPSERT FAILED ===");
-        console.error(upsertError);
-        console.error("=== END LEAD UPSERT ERROR ===");
+        console.error("=== LEAD UPSERT FAILED ===", upsertError);
       } else {
         const wasAlreadyBooked = existingLead?.status === "Booked";
         const isNowBooked = newStatus === "Booked";
@@ -374,10 +372,7 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
           });
 
           if (!emailResult.success) {
-            console.error("=== BOOKING CONFIRMATION EMAIL FAILED ===");
-            console.error(emailResult.error);
-          } else {
-            console.log(`[Email] Booking confirmation sent to ${mergedData.email}`);
+            console.error("=== BOOKING CONFIRMATION EMAIL FAILED ===", emailResult.error);
           }
         }
 
@@ -395,10 +390,7 @@ Set isEmergency to true ONLY if the situation is genuinely urgent — broken sys
           });
 
           if (!alertResult.success) {
-            console.error("=== EMERGENCY ALERT FAILED ===");
-            console.error(alertResult.error);
-          } else {
-            console.log(`[Emergency] Alert sent to ${client.owner_alert_email}`);
+            console.error("=== EMERGENCY ALERT FAILED ===", alertResult.error);
           }
         }
       }

@@ -23,14 +23,14 @@ async function rateLimitedFetch(url: string): Promise<Response> {
 
 export async function geocodeZip(
   zipCode: string,
-  countryHint: string = "us"
+  countryHint: string
 ): Promise<{ lat: number; lng: number } | null> {
   if (!zipCode || zipCode.trim().length < 3) return null;
 
   try {
     const url = `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(
       zipCode.trim()
-    )}&country=${countryHint}&format=json&limit=1`;
+    )}${countryHint ? `&country=${countryHint}` : ""}&format=json&limit=1`;
 
     const response = await rateLimitedFetch(url);
     if (!response.ok) return null;
