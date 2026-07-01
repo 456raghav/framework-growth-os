@@ -10,6 +10,7 @@ type Props = {
   initialFollowupChannel: string | null;
   initialOwnerPhone: string | null;
   initialCalendarLink: string | null;
+  initialShopAddress: string | null;
 };
 
 export default function EmbedSettings({
@@ -20,6 +21,7 @@ export default function EmbedSettings({
   initialFollowupChannel,
   initialOwnerPhone,
   initialCalendarLink,
+  initialShopAddress,
 }: Props) {
   const [allowedDomains, setAllowedDomains] = useState(initialAllowedDomains || "");
   const [customKnowledge, setCustomKnowledge] = useState(initialCustomKnowledge || "");
@@ -27,10 +29,13 @@ export default function EmbedSettings({
   const [followupChannel, setFollowupChannel] = useState(initialFollowupChannel || "email");
   const [ownerPhone, setOwnerPhone] = useState(initialOwnerPhone || "");
   const [calendarLink, setCalendarLink] = useState(initialCalendarLink || "");
+  const [shopAddress, setShopAddress] = useState(initialShopAddress || "");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
   const [hostUrl, setHostUrl] = useState("");
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodeStatus, setGeocodeStatus] = useState<"idle" | "success" | "error">("idle");
 
   useEffect(() => {
     setHostUrl(window.location.origin);
@@ -53,6 +58,7 @@ export default function EmbedSettings({
           followupChannel,
           ownerPhone,
           calendarLink,
+          shopAddress,
         }),
       });
 
@@ -67,6 +73,30 @@ export default function EmbedSettings({
     }
 
     setSaving(false);
+  }
+
+  async function handleGeocodeShop() {
+    if (!shopAddress.trim()) return;
+    setGeocoding(true);
+    setGeocodeStatus("idle");
+
+    try {
+      const res = await fetch("/api/geocode-shop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, address: shopAddress }),
+      });
+
+      if (res.ok) {
+        setGeocodeStatus("success");
+      } else {
+        setGeocodeStatus("error");
+      }
+    } catch {
+      setGeocodeStatus("error");
+    }
+
+    setGeocoding(false);
   }
 
   function handleCopy() {
@@ -118,6 +148,37 @@ export default function EmbedSettings({
             <p className="mt-1.5 text-xs text-amber-400">
               ⚠ No domain set — widget runs on ANY website. Set before going live.
             </p>
+          )}
+        </div>
+
+        {/* Shop location for map */}
+        <div>
+          <label className="text-sm font-medium text-slate-200">
+            Shop address (for lead location map)
+          </label>
+          <p className="mt-1 text-xs text-slate-400">
+            Used to center the service radius map. Enter the client&apos;s business address.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <input
+              value={shopAddress}
+              onChange={(e) => { setShopAddress(e.target.value); setGeocodeStatus("idle"); }}
+              placeholder="e.g. 1234 Main St, Phoenix, AZ 85001"
+              className="flex-1 rounded-md bg-slate-900 p-2.5 text-sm outline-none focus:ring-1 focus:ring-cyan-400"
+            />
+            <button
+              onClick={handleGeocodeShop}
+              disabled={geocoding || !shopAddress.trim()}
+              className="shrink-0 rounded-md bg-cyan-300 px-3 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
+            >
+              {geocoding ? "Locating..." : "Set location"}
+            </button>
+          </div>
+          {geocodeStatus === "success" && (
+            <p className="mt-1.5 text-xs text-emerald-400">✓ Shop location set successfully.</p>
+          )}
+          {geocodeStatus === "error" && (
+            <p className="mt-1.5 text-xs text-red-400">✗ Could not find that address. Try a more specific one.</p>
           )}
         </div>
 
