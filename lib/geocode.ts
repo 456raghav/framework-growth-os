@@ -23,7 +23,7 @@ async function rateLimitedFetch(url: string): Promise<Response> {
 
 export async function geocodeZip(
   zipCode: string,
-  countryHint: string
+  countryHint?: string
 ): Promise<{ lat: number; lng: number } | null> {
   if (!zipCode || zipCode.trim().length < 3) return null;
 
